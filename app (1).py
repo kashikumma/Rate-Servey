@@ -32,50 +32,64 @@ def geocode_address(address):
         pass
     return None, None, None
 
-# --- LIVE MAP SEARCH FOR GARAGES (Overpass API) ---
+# --- LIVE MAP SEARCH FOR GARAGES (With Backup Server) ---
 @st.cache_data(ttl=3600)
 def search_live_garages(lat, lon, radius_miles):
     radius_meters = radius_miles * 1609.34
-    overpass_url = "https://overpass-api.de/api/interpreter"
+    
+    # List of reliable open endpoints to try if one is busy
+    endpoints = [
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass-api.de/api/interpreter"
+    ]
+    
     overpass_query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:20];
     (
       node["amenity"="parking"](around:{radius_meters},{lat},{lon});
       way["amenity"="parking"](around:{radius_meters},{lat},{lon});
     );
     out center;
     """
-    try:
-        response = requests.post(overpass_url, data={'data': overpass_query}, timeout=15)
-        data = response.json()
-        
-        garages = []
-        for element in data.get('elements', []):
-            tags = element.get('tags', {})
-            g_lat = element.get('lat') or element.get('center', {}).get('lat')
-            g_lon = element.get('lon') or element.get('center', {}).get('lon')
+    
+    data = None
+    for url in endpoints:
+        try:
+            response = requests.post(url, data={'data': overpass_query}, timeout=12)
+            if response.status_code == 200:
+                data = response.json()
+                break  # Success, exit the loop!
+        except Exception:
+            continue  # Fail silently and try the next server
             
-            if g_lat and g_lon:
-                dist = haversine(lat, lon, g_lat, g_lon)
-                parking_type = tags.get('parking', 'surface')
-                name = tags.get('name', f"Unnamed Parking ({parking_type.title()})")
-                
-                garages.append({
-                    "name": name,
-                    "lat": g_lat,
-                    "lon": g_lon,
-                    "distance": dist,
-                    "type": parking_type.title(),
-                    "access": tags.get('access', 'Public').title(),
-                    "operator": tags.get('operator', 'Unknown Operator'),
-                    "capacity": tags.get('capacity', 'Not Listed')
-                })
-        
-        garages.sort(key=lambda x: x['distance'])
-        return garages
-    except Exception as e:
-        st.error(f"Error fetching live garage data: {e}")
+    if not data:
+        st.error("The public map servers are temporarily busy. Please wait a moment and hit enter to try again.")
         return []
+        
+    garages = []
+    for element in data.get('elements', []):
+        tags = element.get('tags', {})
+        g_lat = element.get('lat') or element.get('center', {}).get('lat')
+        g_lon = element.get('lon') or element.get('center', {}).get('lon')
+        
+        if g_lat and g_lon:
+            dist = haversine(lat, lon, g_lat, g_lon)
+            parking_type = tags.get('parking', 'surface')
+            name = tags.get('name', f"Unnamed Parking ({parking_type.title()})")
+            
+            garages.append({
+                "name": name,
+                "lat": g_lat,
+                "lon": g_lon,
+                "distance": dist,
+                "type": parking_type.title(),
+                "access": tags.get('access', 'Public').title(),
+                "operator": tags.get('operator', 'Unknown Operator'),
+                "capacity": tags.get('capacity', 'Not Listed')
+            })
+    
+    garages.sort(key=lambda x: x['distance'])
+    return garages
 
 # ===================== MAIN UI =====================
 st.markdown("# Metropolis Market Intelligence")
