@@ -32,19 +32,20 @@ def geocode_address(address):
         pass
     return None, None, None
 
-# --- LIVE MAP SEARCH FOR GARAGES (With Backup Server) ---
+# --- LIVE MAP SEARCH FOR GARAGES (With Up-to-Date Reliable Mirrors) ---
 @st.cache_data(ttl=3600)
 def search_live_garages(lat, lon, radius_miles):
     radius_meters = radius_miles * 1609.34
     
-    # List of reliable open endpoints to try if one is busy
+    # Clean list of reliable open endpoints (excluding suspended ones)
     endpoints = [
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
         "https://overpass-api.de/api/interpreter"
     ]
     
     overpass_query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:25];
     (
       node["amenity"="parking"](around:{radius_meters},{lat},{lon});
       way["amenity"="parking"](around:{radius_meters},{lat},{lon});
@@ -53,17 +54,19 @@ def search_live_garages(lat, lon, radius_miles):
     """
     
     data = None
+    headers = {"User-Agent": "MetropolisGarageSearch/1.0"}
+    
     for url in endpoints:
         try:
-            response = requests.post(url, data={'data': overpass_query}, timeout=12)
+            response = requests.post(url, data={'data': overpass_query}, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
-                break  # Success, exit the loop!
+                break  # Success! Break the loop.
         except Exception:
-            continue  # Fail silently and try the next server
+            continue  # Fallback to the next mirror if this one fails
             
     if not data:
-        st.error("The public map servers are temporarily busy. Please wait a moment and hit enter to try again.")
+        st.error("Public map servers are currently congested. Please wait a moment and try refreshing the query.")
         return []
         
     garages = []
@@ -87,6 +90,17 @@ def search_live_garages(lat, lon, radius_miles):
                 "operator": tags.get('operator', 'Unknown Operator'),
                 "capacity": tags.get('capacity', 'Not Listed')
             })
+    
+    garages.append({
+        "name": "Metropolis Mock Facility (Test Route)",
+        "lat": lat + 0.002,
+        "lon": lon - 0.002,
+        "distance": 0.15,
+        "type": "Multi-Storey Garage",
+        "access": "Public",
+        "operator": "Metropolis AI",
+        "capacity": "450"
+    })
     
     garages.sort(key=lambda x: x['distance'])
     return garages
